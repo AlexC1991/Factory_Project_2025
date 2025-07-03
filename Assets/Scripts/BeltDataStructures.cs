@@ -4,14 +4,7 @@ using System.Collections.Generic;
 [System.Serializable]
 public enum WaypointType
 {
-    Manual, 
-    RollerA, 
-    RollerB, 
-    BPole,      // Top pole near A
-    CPole,      // Bottom pole near A  
-    DPole,      // Top pole near F
-    EPole,      // Bottom pole near F
-    Fixed
+    Manual, SideA, SideB, Fixed
 }
 
 [System.Serializable]
@@ -63,11 +56,7 @@ public struct WaypointData
     {
         if (waypoint != null && isActive)
         {
-            Vector3 scaledMovement = new Vector3(
-                rollerMovement.x * movementMultiplier.x,
-                rollerMovement.y * movementMultiplier.y,
-                rollerMovement.z * movementMultiplier.z
-            );
+            Vector3 scaledMovement = Vector3.Scale(rollerMovement, movementMultiplier);
             waypoint.position = initialPosition + scaledMovement;
         }
     }
@@ -125,7 +114,7 @@ public struct BeltSegment
     public Vector3 endPoint;
     public Vector3 controlPoint1;
     public Vector3 controlPoint2;
-    public bool useBezier;
+    public PathGenerationType curveType;
     public WaypointType startType;
     public WaypointType endType;
 }

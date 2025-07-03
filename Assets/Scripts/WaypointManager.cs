@@ -1,96 +1,129 @@
 using UnityEngine;
-using System.Collections.Generic;
+using System.Collections;
 
 public class WaypointManager : MonoBehaviour
 {
+    [Header("Roller References")]
+    public Transform rollerA;
+    public Transform rollerB;
+
+    [Header("Bezier Control Anchors")]
+    public Transform _splineAnchorB; // Control point 1
+    public Transform _splineAnchorC; // Control point 2
+    public Transform _splineAnchorD; // Control point 3
+    public Transform _splineAnchorE; // Control point 4
+
+    [Header("Belt Settings")]
+    public float conveyorLength = 4f;
+    public float conveyorWidth = 2f;
+    public float beltHeight = 1f;
+    [Range(0.1f, 0.8f)]
+    public float curveIntensity = 0.3f;
+    [Range(0.1f, 2f)]
+    public float curveHeight = 0.5f;
+
     [Header("Pole Settings")]
     public float poleRadius = 0.1f;
     public float poleHeight = 0.3f;
     public Material cPoleMaterial;
     public Material bPoleMaterial;
-    
-    [Header("Conveyor Dimensions")]
-    public float conveyorLength = 4f;
-    public float conveyorWidth = 2f;
-    public float beltHeight = 1f;
-    public float poleOffset = 1.5f;
-    
-    private GameObject poleContainer;
-    
-    public List<WaypointData> CreateConveyorSetup()
+
+    private BeltPathTracer _beltTracer;
+    private Vector3 lastRollerAPos, lastRollerBPos;
+
+    private void Start()
     {
-        ClearAllWaypoints();
-        CreatePoleContainer();
-        
-        List<WaypointData> newWaypoints = new List<WaypointData>();
-        Vector3 center = transform.position;
-        
-        // Create 6-point belt system
-        var waypointConfigs = new[]
+        _beltTracer = GetComponent<BeltPathTracer>();
+
+        if (rollerA != null) lastRollerAPos = rollerA.position;
+        if (rollerB != null) lastRollerBPos = rollerB.position;
+
+        UpdateControlPoints();
+        StartCoroutine(MonitorRollerMovement());
+    }
+
+    private IEnumerator MonitorRollerMovement()
+    {
+        while (true)
         {
-            new { pos = center + new Vector3(-conveyorLength/2, beltHeight, 0), type = WaypointType.RollerA, name = "A_RollerStart", order = 0 },
-            new { pos = center + new Vector3(-conveyorLength/4, beltHeight, conveyorWidth/2 + poleOffset), type = WaypointType.BPole, name = "B_Pole_TopA", order = 1 },
-            new { pos = center + new Vector3(-conveyorLength/4, beltHeight, -conveyorWidth/2 - poleOffset), type = WaypointType.CPole, name = "C_Pole_BottomA", order = 2 },
-            new { pos = center + new Vector3(conveyorLength/4, beltHeight, conveyorWidth/2 + poleOffset), type = WaypointType.DPole, name = "D_Pole_TopF", order = 3 },
-            new { pos = center + new Vector3(conveyorLength/4, beltHeight, -conveyorWidth/2 - poleOffset), type = WaypointType.EPole, name = "E_Pole_BottomF", order = 4 },
-            new { pos = center + new Vector3(conveyorLength/2, beltHeight, 0), type = WaypointType.RollerB, name = "F_RollerEnd", order = 5 }
-        };
-        
-        foreach (var config in waypointConfigs)
-        {
-            GameObject waypoint = new GameObject(config.name);
-            waypoint.transform.position = config.pos;
-            waypoint.transform.parent = poleContainer.transform;
-            
-            // Create visual for poles
-            if (config.type != WaypointType.RollerA && config.type != WaypointType.RollerB)
+            bool moved = false;
+
+            if (rollerA != null && Vector3.Distance(rollerA.position, lastRollerAPos) > 0.01f)
             {
-                CreatePoleVisual(waypoint, config.type);
+                lastRollerAPos = rollerA.position;
+                moved = true;
             }
-            
-            var wpData = new WaypointData(waypoint.transform, config.type, Vector3.one, config.order);
-            wpData.isActive = true;
-            newWaypoints.Add(wpData);
+
+            if (rollerB != null && Vector3.Distance(rollerB.position, lastRollerBPos) > 0.01f)
+            {
+                lastRollerBPos = rollerB.position;
+                moved = true;
+            }
+
+            if (moved)
+            {
+                UpdateControlPoints();
+                _beltTracer?.OnRollersChanged();
+            }
+
+            yield return new WaitForSeconds(0.05f);
         }
-        
-        Debug.Log("Created 6-point belt system");
-        return newWaypoints;
     }
-    
-    void CreatePoleContainer()
+
+    public void UpdateControlPoints()
     {
-        poleContainer = GameObject.Find("Belt Poles");
-        if (poleContainer == null)
+        if (rollerA == null || rollerB == null) return;
+
+        Vector3 start = rollerA.position;
+        Vector3 end = rollerB.position;
+        Vector3 direction = (end - start);
+        float distance = direction.magnitude;
+        Vector3 directionNorm = direction.normalized;
+
+        Vector3 midPoint = (start + end) * 0.5f;
+        Vector3 perpendicular = Vector3.Cross(directionNorm, Vector3.up).normalized;
+        Vector3 upVector = Vector3.up;
+
+        // Calculate control point positions for smooth natural curve
+        float controlOffset = distance * curveIntensity;
+        float heightOffset = curveHeight;
+        float widthOffset = conveyorWidth * 0.3f;
+
+        // Control points create a smooth S-curve or arc
+        if (_splineAnchorB != null)
+            _splineAnchorB.position = start + directionNorm * (controlOffset * 0.5f) + perpendicular * widthOffset;
+
+        if (_splineAnchorC != null)
+            _splineAnchorC.position = midPoint + upVector * heightOffset + perpendicular * (widthOffset * 0.5f);
+
+        if (_splineAnchorD != null)
+            _splineAnchorD.position = midPoint + upVector * heightOffset - perpendicular * (widthOffset * 0.5f);
+
+        if (_splineAnchorE != null)
+            _splineAnchorE.position = end - directionNorm * (controlOffset * 0.5f) - perpendicular * widthOffset;
+    }
+
+    public Vector3[] GetControlPoints()
+    {
+        return new Vector3[]
         {
-            poleContainer = new GameObject("Belt Poles");
-            poleContainer.transform.parent = transform;
-        }
+            _splineAnchorB != null ? _splineAnchorB.position : Vector3.zero,
+            _splineAnchorC != null ? _splineAnchorC.position : Vector3.zero,
+            _splineAnchorD != null ? _splineAnchorD.position : Vector3.zero,
+            _splineAnchorE != null ? _splineAnchorE.position : Vector3.zero
+        };
     }
-    
-    void CreatePoleVisual(GameObject parent, WaypointType poleType)
+
+    public float GetBendAngle()
     {
-        GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-        visual.transform.parent = parent.transform;
-        visual.transform.localPosition = Vector3.zero;
-        visual.transform.localScale = new Vector3(poleRadius * 2f, poleHeight, poleRadius * 2f);
-        visual.name = "Visual";
-        
-        var renderer = visual.GetComponent<Renderer>();
-        
-        if ((poleType == WaypointType.BPole || poleType == WaypointType.DPole) && cPoleMaterial != null)
-            renderer.material = cPoleMaterial;
-        else if ((poleType == WaypointType.CPole || poleType == WaypointType.EPole) && bPoleMaterial != null)
-            renderer.material = bPoleMaterial;
+        if (rollerA == null || rollerB == null) return 0f;
+        Vector3 toB = (rollerB.position - rollerA.position).normalized;
+        return Vector3.Angle(Vector3.forward, toB);
     }
-    
-    public void ClearAllWaypoints()
+
+    public float GetDistance()
     {
-        if (poleContainer != null)
-        {
-            if (Application.isPlaying)
-                DestroyImmediate(poleContainer);
-            else
-                DestroyImmediate(poleContainer);
-        }
+        return rollerA != null && rollerB != null ? 
+               Vector3.Distance(rollerA.position, rollerB.position) : 0f;
     }
 }

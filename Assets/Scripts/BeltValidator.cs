@@ -1,168 +1,152 @@
 using UnityEngine;
-using System.Collections.Generic;
-using System.Linq;
+using System.Collections;
 
 public class BeltValidator : MonoBehaviour
 {
     [Header("Validation Settings")]
-    [Range(0.5f, 3f)]
-    public float optimalRollerDistance = 2f;
-    [Range(0.2f, 2f)]
-    public float minimumRollerDistance = 0.8f;
-    [Range(0.2f, 1f)]
-    public float minPoleDistance = 0.3f;
-    [Range(5f, 15f)]
-    public float maxRollerDistance = 12f;
+    [Range(0.5f, 3f)] public float optimalRollerDistance = 2f;
+    [Range(0.2f, 2f)] public float minimumRollerDistance = 0.8f;
+    [Range(5f, 15f)] public float maxRollerDistance = 12f;
+    [Range(0f, 90f)] public float maxBendAngle = 60f;
     
-    public ValidationState ValidateBeltConfiguration(List<WaypointData> waypoints)
+    [Header("Ghost Preview")]
+    public bool showGhostPreview = true;
+    public float ghostFadeTime = 0.5f;
+    
+    [Header("Current State")]
+    public ValidationState currentState = ValidationState.Valid;
+    
+    private WaypointManager waypointManager;
+    private float validationTimer = 0f;
+    private bool isValidationStable = false;
+    
+    private void Start()
     {
-        var mainPoints = waypoints
-            .Where(wp => wp.waypoint != null && wp.isActive && 
-                   (wp.type == WaypointType.RollerA || wp.type == WaypointType.RollerB))
-            .ToList();
+        waypointManager = GetComponent<WaypointManager>();
+    }
+    
+    public ValidationState ValidateSetup()
+    {
+        if (waypointManager == null) return ValidationState.Invalid;
         
-        var poles = waypoints
-            .Where(wp => wp.waypoint != null && wp.isActive && 
-                   (wp.type == WaypointType.BPole || wp.type == WaypointType.CPole || 
-                    wp.type == WaypointType.DPole || wp.type == WaypointType.EPole))
-            .ToList();
+        ValidationState distanceState = ValidateRollerDistance();
+        ValidationState angleState = ValidateBendAngle();
+        ValidationState geometryState = ValidateGeometry();
         
-        // Invalid cases
-        if (mainPoints.Count < 2)
+        ValidationState newState = GetWorstState(distanceState, angleState, geometryState);
+        
+        if (newState != currentState)
         {
-            Debug.Log("Validation: INVALID - Need at least 2 rollers");
+            currentState = newState;
+            ResetValidationTimer();
+        }
+        
+        UpdateValidationTimer();
+        return currentState;
+    }
+    
+    private ValidationState ValidateRollerDistance()
+    {
+        float distance = waypointManager.GetDistance();
+        
+        if (distance > maxRollerDistance || distance < minimumRollerDistance)
             return ValidationState.Invalid;
-        }
-        
-        var distanceCheck = CheckRollerDistances(mainPoints);
-        if (distanceCheck == ValidationState.Invalid)
-        {
-            Debug.Log("Validation: INVALID - Rollers too close or too far");
-            return ValidationState.Invalid;
-        }
-        
-        if (HasOverlappingPositions(waypoints))
-        {
-            Debug.Log("Validation: INVALID - Overlapping waypoints");
-            return ValidationState.Invalid;
-        }
-        
-        // Warning cases
-        if (distanceCheck == ValidationState.Warning)
-        {
-            Debug.Log("Validation: WARNING - Suboptimal roller distances");
+        if (Mathf.Abs(distance - optimalRollerDistance) > 1f)
             return ValidationState.Warning;
-        }
         
-        if (poles.Count < 4)
-        {
-            Debug.Log($"Validation: WARNING - Need 4 control poles, have {poles.Count}");
-            return ValidationState.Warning;
-        }
-        
-        if (!ArePolePositionsOptimal(mainPoints, poles))
-        {
-            Debug.Log("Validation: WARNING - Poles not optimally positioned");
-            return ValidationState.Warning;
-        }
-        
-        // Valid case
-        Debug.Log("Validation: VALID - Good 6-point belt configuration");
         return ValidationState.Valid;
     }
     
-    ValidationState CheckRollerDistances(List<WaypointData> rollers)
+    private ValidationState ValidateBendAngle()
     {
-        bool hasWarning = false;
+        float angle = waypointManager.GetBendAngle();
         
-        for (int i = 0; i < rollers.Count; i++)
-        {
-            for (int j = i + 1; j < rollers.Count; j++)
-            {
-                float distance = Vector3.Distance(
-                    rollers[i].waypoint.position, 
-                    rollers[j].waypoint.position
-                );
-                
-                if (distance < minimumRollerDistance)
-                {
-                    Debug.Log($"Rollers too close: {distance:F2} < {minimumRollerDistance}");
-                    return ValidationState.Invalid;
-                }
-                
-                if (distance > maxRollerDistance)
-                {
-                    Debug.Log($"Rollers too far: {distance:F2} > {maxRollerDistance}");
-                    return ValidationState.Invalid;
-                }
-                
-                if (distance < optimalRollerDistance * 0.7f || distance > optimalRollerDistance * 1.5f)
-                {
-                    Debug.Log($"Suboptimal roller distance: {distance:F2} (optimal: {optimalRollerDistance})");
-                    hasWarning = true;
-                }
-            }
-        }
+        if (angle > maxBendAngle)
+            return ValidationState.Invalid;
+        if (angle > maxBendAngle * 0.75f)
+            return ValidationState.Warning;
         
-        return hasWarning ? ValidationState.Warning : ValidationState.Valid;
+        return ValidationState.Valid;
     }
     
-    bool HasOverlappingPositions(List<WaypointData> waypoints)
+    private ValidationState ValidateGeometry()
     {
-        var activeWaypoints = waypoints.Where(wp => wp.waypoint != null && wp.isActive).ToList();
-        
-        for (int i = 0; i < activeWaypoints.Count; i++)
-        {
-            for (int j = i + 1; j < activeWaypoints.Count; j++)
-            {
-                float distance = Vector3.Distance(
-                    activeWaypoints[i].waypoint.position,
-                    activeWaypoints[j].waypoint.position
-                );
-                
-                if (distance < 0.1f)
-                {
-                    Debug.Log("Found overlapping waypoints");
-                    return true;
-                }
-            }
-        }
-        
-        return false;
+        // Additional geometry validation can be added here
+        return ValidationState.Valid;
     }
     
-    bool ArePolePositionsOptimal(List<WaypointData> rollers, List<WaypointData> poles)
+    private ValidationState GetWorstState(params ValidationState[] states)
     {
-        if (poles.Count < 4) return false;
-        
-        Vector3 rollerCenter = Vector3.zero;
-        foreach (var roller in rollers)
+        foreach (var state in states)
         {
-            rollerCenter += roller.waypoint.position;
+            if (state == ValidationState.Invalid) return ValidationState.Invalid;
         }
-        rollerCenter /= rollers.Count;
-        
-        foreach (var pole in poles)
+        foreach (var state in states)
         {
-            float distanceFromCenter = Vector3.Distance(pole.waypoint.position, rollerCenter);
-            
-            if (distanceFromCenter < 1f || distanceFromCenter > 5f)
+            if (state == ValidationState.Warning) return ValidationState.Warning;
+        }
+        return ValidationState.Valid;
+    }
+    
+    private void ResetValidationTimer()
+    {
+        validationTimer = 0f;
+        isValidationStable = false;
+    }
+    
+    private void UpdateValidationTimer()
+    {
+        if (currentState == ValidationState.Valid)
+        {
+            validationTimer += Time.deltaTime;
+            if (validationTimer >= ghostFadeTime)
             {
-                Debug.Log($"Pole {pole.type} not optimally positioned: distance {distanceFromCenter:F2} from center");
-                return false;
-            }
-            
-            foreach (var roller in rollers)
-            {
-                float distanceToRoller = Vector3.Distance(pole.waypoint.position, roller.waypoint.position);
-                if (distanceToRoller < minPoleDistance)
-                {
-                    Debug.Log($"Pole {pole.type} too close to roller: {distanceToRoller:F2}");
-                    return false;
-                }
+                isValidationStable = true;
             }
         }
+        else
+        {
+            validationTimer = 0f;
+            isValidationStable = false;
+        }
+    }
+    
+    public Color GetValidationColor()
+    {
+        Color baseColor = currentState switch
+        {
+            ValidationState.Valid => Color.green,
+            ValidationState.Warning => Color.yellow,
+            ValidationState.Invalid => Color.red,
+            _ => Color.white
+        };
         
-        return true;
+        if (showGhostPreview && !isValidationStable)
+        {
+            float alpha = currentState == ValidationState.Valid ? 
+                         Mathf.Lerp(0.8f, 0.2f, validationTimer / ghostFadeTime) : 0.6f;
+            baseColor.a = alpha;
+        }
+        
+        return baseColor;
+    }
+    
+    public bool ShouldGenerateMesh()
+    {
+        return currentState == ValidationState.Valid && isValidationStable;
+    }
+    
+    private void OnDrawGizmos()
+    {
+        if (!showGhostPreview) return;
+        
+        Gizmos.color = GetValidationColor();
+        
+        if (waypointManager != null && waypointManager.rollerA != null && waypointManager.rollerB != null)
+        {
+            Gizmos.DrawLine(waypointManager.rollerA.position, waypointManager.rollerB.position);
+            Gizmos.DrawWireSphere(waypointManager.rollerA.position, 0.2f);
+            Gizmos.DrawWireSphere(waypointManager.rollerB.position, 0.2f);
+        }
     }
 }
